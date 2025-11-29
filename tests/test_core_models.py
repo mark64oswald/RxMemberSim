@@ -270,7 +270,8 @@ class TestAdjudicationEngine:
         self, member: RxMember, claim: PharmacyClaim
     ) -> None:
         """Test pricing applies deductible correctly."""
-        engine = AdjudicationEngine()
+        formulary = FormularyGenerator().generate_standard_commercial()
+        engine = AdjudicationEngine(formulary=formulary)
         response = engine.adjudicate(claim, member)
 
         assert response.response_status == "P"

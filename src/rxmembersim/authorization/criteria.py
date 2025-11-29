@@ -303,7 +303,7 @@ class ClinicalCriteriaLibrary:
                 ClinicalCriterion(
                     criterion_id="TNF-SPEC",
                     criterion_type=CriterionType.SPECIALIST,
-                    description="Prescribed by rheumatologist, dermatologist, or gastroenterologist",
+                    description="Prescribed by rheumatologist, dermatologist, or GI",
                     required=True,
                     specialist_types=[
                         "rheumatology",

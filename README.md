@@ -21,8 +21,17 @@ Built on [healthsim-core](https://github.com/mark64oswald/healthsim-core), it pr
 
 ## What Can You Do?
 
+### Through Conversation (Claude Desktop/Code)
+- "Generate a pharmacy member with diabetes medications"
+- "Check if Humira is on the formulary and what tier"
+- "Process a claim for 30 tablets of metformin"
+- "Run the step therapy scenario"
+
+### Through Code
+
 | Capability | Description |
 |------------|-------------|
+| **Generate Members** | Create pharmacy members with BIN/PCN/Group and accumulators |
 | **Generate Claims** | Create realistic B1/B2 pharmacy claims with proper adjudication |
 | **Check Formulary** | Simulate formulary lookups with tier assignments and restrictions |
 | **DUR Screening** | Generate drug interaction, duplicate therapy, and clinical alerts |
@@ -51,214 +60,207 @@ pip install -e ".[dev]"
 ### Basic Usage
 
 ```python
-from rxmembersim.core import Member, Drug, Pharmacy, Prescriber
-from rxmembersim.claims import Claim, ClaimProcessor
+from datetime import date
+from decimal import Decimal
 
-# Create a pharmacy member
-member = Member(
-    member_id="RX123456789",
-    cardholder_id="CH987654321",
-    group_number="GRP001",
+from rxmembersim.core.member import RxMemberGenerator
+from rxmembersim.claims.claim import PharmacyClaim, TransactionCode
+from rxmembersim.claims.adjudication import AdjudicationEngine
+from rxmembersim.formulary.formulary import FormularyGenerator
+
+# Generate a pharmacy member
+member = RxMemberGenerator().generate(
     bin="610014",
     pcn="RXTEST",
-    first_name="John",
-    last_name="Doe"
+    group_number="GRP001"
+)
+print(f"Member: {member.member_id}")
+print(f"BIN/PCN/Group: {member.bin}/{member.pcn}/{member.group_number}")
+
+# Create a claim
+claim = PharmacyClaim(
+    claim_id="CLM001",
+    transaction_code=TransactionCode.BILLING,
+    service_date=date.today(),
+    pharmacy_npi="9876543210",
+    member_id=member.member_id,
+    cardholder_id=member.cardholder_id,
+    person_code=member.person_code,
+    bin=member.bin,
+    pcn=member.pcn,
+    group_number=member.group_number,
+    prescription_number="RX123456",
+    fill_number=1,
+    ndc="00071015523",  # Atorvastatin
+    quantity_dispensed=Decimal("30"),
+    days_supply=30,
+    daw_code="0",
+    prescriber_npi="1234567890",
+    ingredient_cost_submitted=Decimal("15.00"),
+    dispensing_fee_submitted=Decimal("2.00"),
+    patient_paid_submitted=Decimal("0.00"),
+    usual_customary_charge=Decimal("25.00"),
+    gross_amount_due=Decimal("17.00"),
 )
 
-# Create a drug by NDC
-drug = Drug.from_ndc("00071015523")  # Lipitor 20mg
+# Adjudicate the claim
+formulary = FormularyGenerator().generate_standard_commercial()
+engine = AdjudicationEngine(formulary=formulary)
+response = engine.adjudicate(claim, member)
 
-# Submit a claim
-claim = Claim(
-    member=member,
-    drug=drug,
-    pharmacy_npi="1234567890",
-    prescriber_npi="0987654321",
-    quantity=30,
-    days_supply=30
-)
-
-# Process the claim
-processor = ClaimProcessor()
-response = processor.adjudicate(claim)
-
-print(f"Status: {response.status}")
-print(f"Patient Pay: ${response.patient_pay}")
-print(f"Plan Pay: ${response.plan_pay}")
+print(f"Status: {response.response_status}")
+print(f"Plan Pay: ${response.total_amount_paid}")
+print(f"Patient Pay: ${response.patient_pay_amount}")
 ```
 
 ### Formulary Check
 
 ```python
-from rxmembersim.formulary import Formulary, FormularyCheck
+from rxmembersim.formulary.formulary import FormularyGenerator
 
-# Load a formulary
-formulary = Formulary.load("commercial_standard")
+# Generate a formulary
+formulary = FormularyGenerator().generate_standard_commercial()
 
 # Check drug coverage
-result = formulary.check(
-    ndc="00071015523",
-    member_id="RX123456789"
-)
+status = formulary.check_coverage("00071015523")  # Atorvastatin
 
-print(f"Covered: {result.is_covered}")
-print(f"Tier: {result.tier}")
-print(f"Copay: ${result.copay}")
-print(f"Restrictions: {result.restrictions}")
+print(f"Covered: {status.covered}")
+print(f"Tier: {status.tier} ({status.tier_name})")
+print(f"Copay: ${status.copay}")
+print(f"Requires PA: {status.requires_pa}")
 ```
 
 ### DUR Check
 
 ```python
-from rxmembersim.dur import DURValidator
+from datetime import date
+from rxmembersim.dur.validator import DURValidator
 
 # Create DUR validator
-dur = DURValidator()
+validator = DURValidator()
 
-# Check for alerts
-alerts = dur.validate(
-    drug_ndc="00071015523",
-    member_id="RX123456789",
-    prescriber_npi="0987654321"
+# Check for drug interactions
+result = validator.validate_simple(
+    ndc="00056017270",
+    gpi="83300010000330",  # Warfarin
+    drug_name="Warfarin 5mg",
+    member_id="MEM001",
+    service_date=date.today(),
+    current_medications=[
+        {"ndc": "00904515260", "gpi": "66100010000310", "name": "Ibuprofen"}
+    ],
+    patient_age=65,
+    patient_gender="F",
 )
 
-for alert in alerts:
-    print(f"[{alert.severity}] {alert.code}: {alert.message}")
+print(f"DUR Passed: {result.passed}")
+print(f"Alerts: {result.total_alerts}")
+for alert in result.alerts:
+    print(f"  [{alert.alert_type.value}] {alert.message}")
 ```
 
 ### Prior Authorization
 
 ```python
-from rxmembersim.authorization import PriorAuthRequest, PriorAuthProcessor
+from decimal import Decimal
+from rxmembersim.authorization.prior_auth import PAWorkflow
 
-# Create PA request
-pa_request = PriorAuthRequest(
-    member_id="RX123456789",
-    drug_ndc="00093720101",  # Specialty drug
-    prescriber_npi="0987654321",
-    diagnosis_codes=["M05.79"],
-    clinical_info={
-        "prior_therapies": ["methotrexate", "sulfasalazine"],
-        "lab_results": {"RF": "positive", "CRP": 12.5}
-    }
+# Create PA workflow
+pa_workflow = PAWorkflow()
+
+# Submit PA request
+request = pa_workflow.create_request(
+    member_id="MEM001",
+    cardholder_id="CH001",
+    ndc="00169413512",  # Ozempic
+    drug_name="Ozempic 0.5mg",
+    quantity=Decimal("1"),
+    days_supply=28,
+    prescriber_npi="1234567890",
+    prescriber_name="Dr. Smith",
 )
 
-# Process the request
-processor = PriorAuthProcessor()
-response = processor.evaluate(pa_request)
+print(f"PA Request ID: {request.pa_request_id}")
+print(f"Status: {request.status}")
 
-print(f"Decision: {response.decision}")
-print(f"Auth Number: {response.auth_number}")
-print(f"Valid Through: {response.expiration_date}")
+# Check for auto-approval (emergency)
+request_urgent = pa_workflow.create_request(
+    member_id="MEM001",
+    cardholder_id="CH001",
+    ndc="00169413512",
+    drug_name="Ozempic 0.5mg",
+    quantity=Decimal("1"),
+    days_supply=28,
+    prescriber_npi="1234567890",
+    prescriber_name="Dr. Smith",
+    urgency="emergency",
+)
+response = pa_workflow.check_auto_approval(request_urgent)
+print(f"Auto-Approved: {response.auto_approved if response else False}")
+```
+
+### Run Scenarios
+
+```python
+from rxmembersim.scenarios.engine import RxScenarioEngine
+
+engine = RxScenarioEngine()
+
+# List available scenarios
+for scenario in engine.list_scenarios():
+    print(f"  {scenario.scenario_id}: {scenario.scenario_name}")
+
+# Run a scenario
+scenario = engine.new_therapy_approved()
+timeline = engine.execute_scenario(scenario, "MEM001")
+
+print(f"\nTimeline ({len(timeline.events)} events):")
+for event in timeline.events:
+    print(f"  {event.event_type.value}")
 ```
 
 ## What RxMemberSim Generates
 
-### Core Entities
-- **Members**: Pharmacy benefit enrollees with BIN/PCN/Group
-- **Drugs**: NDC-based products with therapeutic classification (GPI)
-- **Pharmacies**: Retail, mail-order, and specialty pharmacy NPIs
-- **Prescribers**: Physician NPIs with DEA numbers and specialties
-- **Prescriptions**: Rx details with sig codes, quantities, refills
-
-### Claims & Adjudication
-- **B1 Claims**: Billing requests with all NCPDP segments
-- **B2 Responses**: Paid, rejected, or needs-PA responses
-- **Pricing**: Ingredient cost, dispensing fee, patient pay breakdown
-- **Reject Codes**: NCPDP standard rejection reasons
-
-### Clinical Data
-- **DUR Alerts**: Drug interactions, duplicate therapy, age/gender contraindications
-- **Prior Authorizations**: Clinical criteria, approval workflows
-- **Step Therapy**: Required drug progressions
-- **Quantity Limits**: Daily/monthly supply restrictions
-
-### Specialty Pharmacy
-- **Hub Enrollments**: Patient intake and onboarding
-- **REMS Programs**: Risk evaluation and mitigation
-- **Copay Assistance**: Manufacturer programs
-- **Adherence Tracking**: Refill patterns and interventions
+| Category | Data Generated |
+|----------|----------------|
+| **Members** | Demographics, BIN/PCN/Group, accumulators, coverage dates |
+| **Claims** | B1/B2 transactions, reversals, pricing, reject codes |
+| **Formulary** | Tier structures, step therapy, quantity limits, PA requirements |
+| **DUR** | Drug interactions, therapeutic duplication, early refill, dose alerts |
+| **Prior Auth** | PA requests, ePA transactions, approvals/denials, appeals |
+| **Specialty** | Hub enrollment, REMS, copay assistance, cold chain |
+| **Pricing** | Rebates, spread pricing, copay cards, deductibles |
 
 ## Output Formats
 
-### NCPDP Telecommunication
+- **NCPDP Telecommunication** (B1/B2 claims)
+- **NCPDP SCRIPT** (NewRx, RxChange)
+- **NCPDP ePA** (Prior authorization)
+- **JSON / CSV** exports
 
-```python
-from rxmembersim.formats.ncpdp import TelecomFormatter
-
-formatter = TelecomFormatter()
-b1_message = formatter.format_claim(claim)
-```
-
-### NCPDP SCRIPT
-
-```python
-from rxmembersim.formats.ncpdp import ScriptFormatter
-
-formatter = ScriptFormatter()
-new_rx = formatter.format_new_rx(prescription)
-```
-
-### NCPDP ePA
-
-```python
-from rxmembersim.formats.ncpdp import EPAFormatter
-
-formatter = EPAFormatter()
-pa_initiation = formatter.format_pa_initiation(pa_request)
-```
-
-### X12 835 (Payment)
-
-```python
-from rxmembersim.formats.x12 import EDI835Formatter
-
-formatter = EDI835Formatter()
-remittance = formatter.format_payment(paid_claims)
-```
-
-## Use Cases
-
-### PBM System Testing
-Test claim adjudication engines, formulary lookups, and DUR processing with realistic synthetic data.
-
-### Integration Testing
-Validate NCPDP message parsing and generation across system boundaries.
-
-### Training Environments
-Provide realistic pharmacy data for analyst and pharmacist training without privacy concerns.
-
-### Analytics Development
-Build and test pharmacy analytics dashboards with representative claim distributions.
-
-### Compliance Testing
-Verify system behavior for prior authorization requirements and formulary restrictions.
-
-## For Developers
-
-### Project Structure
+## Project Structure
 
 ```
 rxmembersim/
 ├── src/rxmembersim/
-│   ├── core/           # Member, Drug, Pharmacy, Prescriber models
-│   ├── claims/         # Claim submission and adjudication
-│   ├── formulary/      # Formulary management, tiers, restrictions
-│   ├── dur/            # Drug Utilization Review rules and alerts
-│   ├── authorization/  # Prior auth and ePA workflows
-│   ├── specialty/      # Specialty pharmacy hub simulations
-│   ├── pricing/        # Rebates, spread, copay assistance
-│   ├── scenarios/      # Pre-built test scenarios
-│   ├── formats/        # NCPDP, X12 formatters
-│   ├── mcp/            # MCP server integration
-│   └── validation/     # Data validation framework
+│   ├── core/           # Member, Drug models
+│   ├── claims/         # Claim, Response, Adjudication
+│   ├── formulary/      # Formulary, Tiers, Step Therapy
+│   ├── dur/            # DUR rules and validation
+│   ├── authorization/  # Prior auth and ePA
+│   ├── specialty/      # Hub services
+│   ├── pricing/        # Rebates, spread, copay assist
+│   ├── scenarios/      # Event engine
+│   ├── formats/        # NCPDP formatters
+│   ├── mcp/            # MCP server
+│   └── validation/     # Validation framework
 ├── tests/              # Test suite
 ├── examples/           # Usage examples
-├── demos/              # Interactive demonstrations
-└── skills/             # Domain knowledge documentation
+├── demos/              # Interactive demos
+└── skills/             # Domain documentation
 ```
 
-### Running Tests
+## Running Tests
 
 ```bash
 # Run all tests
@@ -268,69 +270,17 @@ pytest
 pytest --cov=rxmembersim --cov-report=html
 
 # Run specific test file
-pytest tests/test_claims.py
+pytest tests/test_claims.py -v
 ```
 
-### Code Quality
+## Code Quality
 
 ```bash
 # Lint
 ruff check src tests
 
-# Type check
-mypy src --ignore-missing-imports
-
 # Format
 ruff format src tests
-```
-
-## Scenarios
-
-RxMemberSim includes pre-built scenarios for common pharmacy workflows:
-
-### New Therapy Start
-```python
-from rxmembersim.scenarios.templates import NewTherapyScenario
-
-scenario = NewTherapyScenario(
-    drug_class="statin",
-    member_type="commercial"
-)
-events = scenario.execute()
-```
-
-### Step Therapy Progression
-```python
-from rxmembersim.scenarios.templates import StepTherapyScenario
-
-scenario = StepTherapyScenario(
-    target_drug="adalimumab",
-    required_steps=["methotrexate", "sulfasalazine"]
-)
-events = scenario.execute()
-```
-
-### Specialty Onboarding
-```python
-from rxmembersim.scenarios.templates import SpecialtyOnboardScenario
-
-scenario = SpecialtyOnboardScenario(
-    drug_ndc="00093720101",
-    hub="manufacturer_hub"
-)
-events = scenario.execute()
-```
-
-### Adherence Journey
-```python
-from rxmembersim.scenarios.templates import AdherenceScenario
-
-scenario = AdherenceScenario(
-    therapy="diabetes",
-    duration_months=12,
-    adherence_pattern="declining"
-)
-events = scenario.execute()
 ```
 
 ## MCP Integration
@@ -343,18 +293,19 @@ python -m rxmembersim.mcp.server
 ```
 
 Available tools:
-- `generate_claim` - Create a pharmacy claim
+- `generate_rx_member` - Create a pharmacy member
 - `check_formulary` - Look up drug coverage
-- `run_dur` - Execute DUR screening
-- `submit_pa` - Submit prior authorization
-- `get_member` - Retrieve member information
-- `search_drugs` - Search drug database by name/NDC
+- `check_dur` - Execute DUR screening
+- `submit_prior_auth` - Submit prior authorization
+- `run_rx_scenario` - Execute test scenario
+- `list_scenarios` - List available scenarios
 
 ## Related Projects
 
 - [healthsim-core](https://github.com/mark64oswald/healthsim-core) - Shared foundation library
 - [PatientSim](https://github.com/mark64oswald/patientsim) - Clinical patient data generation
 - [MemberSim](https://github.com/mark64oswald/membersim) - Health plan member generation
+- [healthsim-hello](https://github.com/mark64oswald/healthsim-hello) - Getting started tutorial
 
 ## License
 

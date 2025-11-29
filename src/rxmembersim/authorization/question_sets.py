@@ -1,6 +1,6 @@
 """Common ePA question sets for prior authorization."""
 
-from ..formats.ncpdp.epa import ePAQuestion, ePAQuestionSet, QuestionType
+from ..formats.ncpdp.epa import QuestionType, ePAQuestion, ePAQuestionSet
 
 
 class CommonQuestionSets:

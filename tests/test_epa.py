@@ -2,10 +2,6 @@
 
 from rxmembersim.authorization.question_sets import CommonQuestionSets
 from rxmembersim.formats.ncpdp.epa import (
-    PAInitiationRequest,
-    PAInitiationResponse,
-    PARequest,
-    PAResponse,
     QuestionType,
     ePAAnswer,
     ePAGenerator,
