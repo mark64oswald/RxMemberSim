@@ -7,7 +7,7 @@ name = "rxmembersim"
 version = "1.0.0"
 description = "Synthetic pharmacy benefit data generation"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
 authors = [
     {name = "Mark Oswald"}
