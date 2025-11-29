@@ -14,6 +14,7 @@ from rxmembersim.core.member import (
     RxMemberGenerator,
 )
 from rxmembersim.core.prescription import DAWCode, Prescription
+from rxmembersim.formulary.formulary import FormularyGenerator
 
 
 class TestRxMember:
@@ -230,7 +231,9 @@ class TestAdjudicationEngine:
         self, member: RxMember, claim: PharmacyClaim
     ) -> None:
         """Test adjudicating an approved claim."""
-        engine = AdjudicationEngine()
+        # Use formulary with the drug on it
+        formulary = FormularyGenerator().generate_standard_commercial()
+        engine = AdjudicationEngine(formulary=formulary)
         response = engine.adjudicate(claim, member)
 
         assert response.response_status == "P"
